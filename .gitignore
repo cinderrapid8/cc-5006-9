@@ -23,3 +23,9 @@ __pycache__/
 *.log
 .env
 .env.*
+
+# workstation runtime artifacts
+/project/
+/samples/
+*.db
+/tools/
