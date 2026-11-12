@@ -72,3 +72,27 @@ python3 -m proxyworkstation.app ./project
 * 成片渲染用 `trim=start_frame/end_frame + setpts` 保证每段帧数精确，
   渲染后比对实际帧数与区间帧数之和，并可抽帧目视核对烧录帧号。
 * 代理损坏通过 `-xerror` 全帧解码闸门捕获，截断/字节翻转均在验证阶段报错。
+
+## 代理帧关联实验（源时间映射 vs 内容锚点）
+
+V1 只接受时间保持代理；当代理被删帧、改帧率或外部转码器无法提供可信变换履历时，
+帧号映射会失效。`proxyworkstation/experimental/` 提供两个可切换的小型适配原型，
+均接到 `FramePreview` 查帧入口（主窗口 “Frame association” 下拉框），不改 V1 库表：
+
+* `TimeMappingResolver` —— 按源时间映射，零索引成本，精度依赖变换履历；
+* `ContentAnchorResolver` —— 按内容锚点（帧指纹匹配），抗删帧/时码变化，代价是
+  全帧解码建索引，并对冻结/重复/删除区间显式报 `ambiguous`/`weak_match`/
+  `unrelocatable` 而非静默猜测。
+
+仓库内实验把删帧、时码变化、帧率重采样、冻结帧做成可复现变体，以标记重定位残差
+呈现取舍：
+
+```bash
+source tools/env.sh
+python3 -I scripts/proxy_association_experiment.py experiments/proxy_association
+```
+
+结论、精度/索引成本对比、无法可靠对应的区间、代理身份方案（F1–F3）与待验假设见
+[`docs/代理关联实验.md`](docs/代理关联实验.md)；残差快照在
+`experiments/proxy_association/association_report.json`，由
+`tests/test_experiment_regression.py` 保证可由代码重新取得。

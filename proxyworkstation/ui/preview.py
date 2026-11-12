@@ -47,7 +47,7 @@ class FramePreview(QWidget):
 
     # -- media loading -----------------------------------------------------
 
-    def load_media(self, path, frame_map=None):
+    def load_media(self, path, frame_map=None, resolver=None):
         if not path or not os.path.isfile(path):
             self.show_offline(path)
             return False
@@ -57,6 +57,11 @@ class FramePreview(QWidget):
         self._fps = meta["fps"] or 24.0
         self._frame_count = meta["frame_count"]
         self._frame_map = frame_map
+        # Experimental association resolver (content anchor / source-time
+        # map). When present it owns proxy->source translation; the V1
+        # frame_map dict remains the default and its behavior is unchanged.
+        self._resolver = resolver
+        self._resolution_cache = {}
         self._pix_cache.clear()
         # Keep the playhead across a proxy/original quality switch.
         self._position = min(previous_position, max(0, self._frame_count - 1))
@@ -88,19 +93,46 @@ class FramePreview(QWidget):
                 Qt.SmoothTransformation,
             )
             self._label.setPixmap(scaled)
-        source_frame = self._source_frame(index)
+        source_frame, association = self._source_frame(index)
+        source_text = (
+            f"{source_frame:04d}" if source_frame is not None else "n/a"
+        )
         self._meta_label.setText(
             f"file: {os.path.basename(self._media_path)}   "
             f"proxy/timeline frame: {index:04d}/{self._frame_count - 1:04d}   "
-            f"-> source frame: {source_frame:04d}   {self._fps:g} fps"
+            f"-> source frame: {source_text}   {self._fps:g} fps   {association}"
         )
-        self.statusMessage.emit(f"frame {index} -> source frame {source_frame}")
+        self.statusMessage.emit(
+            f"frame {index} -> source frame {source_text} [{association}]"
+        )
 
     def _source_frame(self, proxy_index):
+        """Return (source_frame_or_None, association_description).
+
+        Three modes, in priority order:
+
+        1. experimental resolver (content anchor / source-time map) - its
+           explicit status is surfaced so ambiguous or unmatched regions are
+           visible in the UI rather than silently guessed;
+        2. V1 FrameMap dict (time-preserving contract) - offset arithmetic;
+        3. no mapping (original media) - identity.
+        """
+        resolver = getattr(self, "_resolver", None)
+        if resolver is not None:
+            if proxy_index not in self._resolution_cache:
+                self._resolution_cache[proxy_index] = (
+                    resolver.resolve_proxy_frame(proxy_index)
+                )
+            resolution = self._resolution_cache[proxy_index]
+            label = f"{resolver.scheme}:{resolution.status}"
+            if resolution.distance is not None:
+                label += f" d={resolution.distance:.2f}"
+            return resolution.source_frame, label
         fmap = getattr(self, "_frame_map", None)
         if fmap:
-            return proxy_index + int(fmap.get("source_start_offset", 0))
-        return proxy_index
+            return proxy_index + int(fmap.get("source_start_offset", 0)), \
+                "v1-frame-map:exact"
+        return proxy_index, "identity"
 
     def _decode(self, index):
         if index in self._pix_cache:

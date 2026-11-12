@@ -102,6 +102,16 @@ class MainWindow(QMainWindow):
         self.quality_combo.addItems(["proxy", "original"])
         self.quality_combo.currentTextChanged.connect(self._load_selected_preview)
         quality_row.addWidget(self.quality_combo)
+        quality_row.addWidget(QLabel("Frame association:"))
+        self.association_combo = QComboBox()
+        # v1-frame-map keeps the original time-preserving contract; the two
+        # experimental schemes drive the same FramePreview entry point through
+        # the experimental resolver interface.
+        self.association_combo.addItems(
+            ["v1-frame-map", "source-time-map", "content-anchor"]
+        )
+        self.association_combo.currentTextChanged.connect(self._load_selected_preview)
+        quality_row.addWidget(self.association_combo)
         quality_row.addStretch(1)
         for text, slot in (
             ("⏮", lambda: self.preview.step(-1)),
@@ -192,12 +202,52 @@ class MainWindow(QMainWindow):
             return
         quality = self.quality_combo.currentText()
         media = self.ws.resolve_media(source["content_hash"], quality)
-        if media["online"] and os.path.isfile(media["path"]):
-            self.preview.load_media(media["path"], media.get("map"))
-        else:
+        if not (media["online"] and os.path.isfile(media["path"])):
             self.preview.show_offline(source["current_path"])
+            self.status.setText(
+                f"previewing {media['kind']} — in/out points stay in source frames"
+            )
+            return
+
+        scheme = self.association_combo.currentText()
+        resolver = None
+        frame_map = media.get("map")
+        if scheme in ("source-time-map", "content-anchor") and media["kind"] == "proxy":
+            resolver = self._build_experimental_resolver(scheme, source, media["path"])
+        self.preview.load_media(
+            media["path"], frame_map=frame_map, resolver=resolver
+        )
+        suffix = f" [{scheme}]" if resolver else ""
         self.status.setText(
-            f"previewing {media['kind']} — in/out points stay in source frames"
+            f"previewing {media['kind']}{suffix} — in/out points stay in source frames"
+        )
+
+    def _build_experimental_resolver(self, scheme, source, proxy_path):
+        """Construct an experimental resolver for the live preview entry point.
+
+        Cache directories live under the project's proxy folder; nothing is
+        written to the V1 database. Failures are surfaced, never silently
+        downgraded to a guessed mapping.
+        """
+        from ..experimental import (
+            TimeMappingResolver,
+            build_content_resolver,
+        )
+
+        cache_dir = os.path.join(self.proxy_dir, ".fingerprint_cache")
+        if scheme == "source-time-map":
+            from ..core.ffutils import probe
+
+            source_meta = {
+                "fps": source["fps"],
+                "frame_count": source["frame_count"],
+            }
+            proxy_meta = probe(proxy_path)
+            return TimeMappingResolver.from_metas(
+                source_meta, proxy_meta, provenance="ui-declared"
+            )
+        return build_content_resolver(
+            source["current_path"], proxy_path, cache_dir=cache_dir
         )
 
     #-- actions -----------------------------------------------------------

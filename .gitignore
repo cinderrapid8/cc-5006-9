@@ -29,3 +29,9 @@ __pycache__/
 /samples/
 *.db
 /tools/
+
+# experimental proxy-association runtime artifacts (regenerable media + cache)
+**/.fingerprint_cache/
+**/fp_cache/
+experiments/proxy_association/*/
+!experiments/proxy_association/association_report.json
